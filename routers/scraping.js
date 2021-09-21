@@ -1,15 +1,21 @@
 const express = require('express');
 const router = express.Router();
-// https://auto.naver.com/car/main.nhn?yearsId=145951
-// https://auto.naver.com/car/main.nhn?yearsId=145259
 const cheerio = require('cheerio');
 const axios = require('axios');
 const iconv = require('iconv-lite');
+
+const mysql = require('mysql');
+const { data } = require('cheerio/lib/api/attributes');
+const connection = mysql.createConnection({
+  host: 'localhost',
+  user: 'root',
+  password: 'dreamele19!',
+  database: 'mycar',
+});
 const url =
   'https://auto.naver.com/car/mainList.nhn?mnfcoNo=0&modelType=OS&order=1&importYn=N&lnchYY=-1&saleType=-1&page=1';
 // const url =
 //   'https://auto.naver.com/car/mainList.nhn?mnfcoNo=0&modelType=OS&order=0&importYn=Y';
-// const url = 'http://www.yes24.com/24/Category/BestSeller';
 
 list = [];
 router.get('/scraping', async (req, res) => {
@@ -25,6 +31,7 @@ router.get('/scraping', async (req, res) => {
       const $ = cheerio.load(content);
       const list = $('.model_group_new > .model_lst > li');
 
+      //#content > div.model_group_new > ul > li:nth-child(1) > div > div > a.model_name
       await list.each(async (i, tag) => {
         const carInfo = $(tag).find('.model_name > .box > strong').text();
         const carName = carInfo.split(' ')[1]; // 차량 이름
@@ -46,16 +53,38 @@ router.get('/scraping', async (req, res) => {
         carPriceFull = trimCarFullPrice(carPriceFull);
         let carPrice = $(tag).find('.lst > .price').text();
         carPrice = trimCarPrice(carPrice);
-        console.log('1');
+
         carDetailImg = await getDetailImg(
           $(tag).find('a.model_name').attr('href')
         );
-        console.log('4');
-        console.log(carName, carDetailImg);
+
+        doc = {
+          car_name: carName,
+          car_age: carYear,
+          car_img: carImg,
+          car_maker_img: carMakerImg,
+          car_type: carType,
+          car_fuel: carFuel,
+          car_fuel_efficiency: carFuelEfficiency,
+          car_fuel_basic: carFuelBasic,
+          car_price_full: carPriceFull,
+          car_price: carPrice,
+          car_detail_img: carDetailImg,
+        };
+        list.push(doc);
       });
     });
 
-    res.send({ result: 'success', message: '크롤링이 완료 되었습니다.' });
+    res
+      .render('index', {
+        result: 'success',
+        message: '크롤링이 완료 되었습니다.',
+      })
+      .then(function () {
+        for (data of list) {
+          insertCarInfo(data.car_name, data.car_age);
+        }
+      });
   } catch (error) {
     //실패 할 경우 코드
     res.send({
@@ -100,32 +129,40 @@ function isWon(text) {
   return false;
 }
 
-async function getDetailImg(text) {
-  console.log('2');
-  const yearId = text.split('=')[1];
-  const detailPageUrl = `https://auto.naver.com/car/main.nhn?yearsId=${yearId}`;
+function getDetailImg(text) {
+  return new Promise(function (resolve, reject) {
+    const yearId = text.split('=')[1];
+    const detailPageUrl = `https://auto.naver.com/car/main.nhn?yearsId=${yearId}`;
 
-  // #carMainImgArea > div > img
-  // #carMainImgArea > div > img
-  try {
-    //크롤링 대상 웹사이트 HTML 가져오기
-    await axios({
-      url: detailPageUrl,
-      method: 'GET',
-      responseType: 'arraybuffer',
-    }).then(async (html) => {
-      //크롤링 코드
-      const content = iconv.decode(html.data, 'UTF-8').toString();
-      const $ = cheerio.load(content);
-      const tag = $('#carMainImgArea > .main_img');
-      const detailImg = $(tag).find('img').attr('src');
-      console.log(detailImg);
-      console.log('3');
-      return detailImg;
-    });
-  } catch (error) {
-    console.log(`error Msg: ${error}`);
-    return 'error';
-  }
+    try {
+      //크롤링 대상 웹사이트 HTML 가져오기
+      axios({
+        url: detailPageUrl,
+        method: 'GET',
+        responseType: 'arraybuffer',
+      }).then(async (html) => {
+        //크롤링 코드
+        const content = iconv.decode(html.data, 'UTF-8').toString();
+        const $ = cheerio.load(content);
+        const tag = $('#carMainImgArea > .main_img');
+        const detailImg = $(tag).find('img').attr('src');
+        resolve(detailImg);
+      });
+    } catch (error) {
+      console.log(`error Msg: ${error}`);
+      return 'error';
+    }
+  });
+}
+
+function insertCarInfo(car_name, car_age) {
+  const sql = 'INSERT INTO mycar_info(car_name, car_age) VALUES(?, ?)';
+  const param = [car_name, car_age];
+  connection.connect();
+  connection.query(sql, param, function (error, result) {
+    if (error) throw error;
+    console.log(`Insert Data`);
+    connection.end();
+  });
 }
 module.exports = router;
